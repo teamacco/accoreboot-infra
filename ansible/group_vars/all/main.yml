@@ -1,0 +1,3 @@
+# Common variables for all environments
+app_name: accoreboot
+ssh_user: ubuntu

@@ -1,0 +1,6 @@
+creation_rules:
+  # All credential files encrypted with these age keys
+  # Add your age public key here after running: age-keygen -o ~/.config/sops/age/keys.txt
+  - path_regex: credentials/.*\.enc\.env$
+    age: >-
+      age1klryysedqz6em7esqt203x9nh585sw8capr0mkgs7qmuf7zdaqrqmrehty
