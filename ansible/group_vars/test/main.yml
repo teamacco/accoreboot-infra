@@ -1,2 +1,4 @@
 # Test environment overrides
 env: test
+node_env: production
+emqx_dashboard_port_exposed: true

@@ -7,10 +7,23 @@ Infrastructure as Code pour AccoReboot : Terraform (provisioning OVH) + Ansible 
 ![Architecture](docs/architecture.svg)
 
 - **1 projet OVH Public Cloud par environnement** (test, preprod, prod)
-- **Instance compute** (b3-8) : Caddy + Node.js + EMQX + PowerSync
+- **Instance compute** (b3-8) : Caddy + API NestJS + EMQX + PowerSync (4 containers Docker)
 - **PostgreSQL manage** (db1-4) : PG17 + TimescaleDB
 - **Secrets** : SOPS + age (chiffres dans Git)
 - **State Terraform** : remote S3 sur OVH Object Storage (1 bucket par projet OVH)
+- **Docker** : installe via cloud-init au premier boot
+- **Pas de domaine** pour l'instant (acces IP only, HTTP :80)
+
+## Services deployes
+
+| Service | Image | Ports exposes |
+|---------|-------|---------------|
+| Caddy | caddy:2 | 80, 443 |
+| API (NestJS) | prive Docker Hub | 127.0.0.1:3000 (via Caddy) |
+| EMQX | emqx/emqx:5.8 | 1883 (MQTT), 8083 (WS), 18083 (dashboard, test only) |
+| PowerSync | journeyapps/powersync-service | 127.0.0.1:8080 (via Caddy) |
+
+PostgreSQL = manage OVH (externe, sslmode=require).
 
 ## Pre-requis
 
@@ -147,11 +160,26 @@ make sops-edit-env ENV=test     # Credentials de l'env test
 ├── ansible/
 │   ├── inventory/                   # Genere par Terraform
 │   ├── group_vars/                  # Variables par env
-│   ├── roles/                       # Roles de configuration
-│   └── playbooks/                   # Playbooks d'orchestration
+│   ├── roles/
+│   └── playbooks/
+│       ├── site.yml                 # Playbook principal
+│       └── templates/               # docker-compose, .env, Caddyfile, etc.
 │
 └── docs/
     └── architecture.svg             # Schema d'architecture
+```
+
+## Verification du deploiement
+
+```bash
+# Depuis ta machine
+curl http://<IP>/health                    # → 200
+curl http://<IP>/.well-known/jwks.json     # → cle publique RSA
+
+# Sur le serveur
+make ssh ENV=test
+cd /opt/accoreboot && make ps              # → 4 containers running
+make logs-api                              # → logs API NestJS
 ```
 
 ## Ajouter un nouvel environnement

@@ -4,7 +4,7 @@ terraform {
   required_providers {
     ovh = {
       source  = "ovh/ovh"
-      version = "~> 0.40"
+      version = "~> 2.9.0"
     }
     openstack = {
       source  = "terraform-provider-openstack/openstack"
@@ -18,9 +18,9 @@ terraform {
   backend "s3" {
     bucket                      = "accoreboot-tfstate"
     key                         = "test/terraform.tfstate"
-    region                      = "eu-west-par"
+    region                      = "gra"
     endpoints = {
-      s3 = "https://s3.eu-west-par.io.cloud.ovh.net/"
+      s3 = "https://s3.gra.io.cloud.ovh.net/"
     }
     skip_credentials_validation = true
     skip_region_validation      = true
@@ -73,6 +73,8 @@ resource "local_file" "ansible_inventory" {
     private_key = var.private_key
     db_host     = module.managed_db.db_host
     db_port     = module.managed_db.db_port
+    db_user     = "accoreboot"
+    db_password = module.managed_db.db_user_password
   })
   filename = "${path.module}/../../../ansible/inventory/${var.environment}.ini"
 }

@@ -61,7 +61,7 @@ help:
 bootstrap:
 	@echo "Bootstrapping S3 state bucket for $(ENV)..."
 	@$(SECRETS) "cd $(TF_BOOTSTRAP_DIR) && \
-		terraform init && \
+		terraform init -upgrade && \
 		terraform apply -auto-approve -var='environment=$(ENV)'"
 
 # Terraform

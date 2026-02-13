@@ -2,7 +2,7 @@ terraform {
   required_providers {
     ovh = {
       source  = "ovh/ovh"
-      version = "~> 0.40"
+      version = "~> 2.9.0"
     }
   }
 }
@@ -20,15 +20,7 @@ resource "ovh_cloud_project_database" "postgresql" {
   }
 }
 
-# Create database user
-resource "ovh_cloud_project_database_user" "app" {
-  service_name = var.service_name
-  engine       = "postgresql"
-  cluster_id   = ovh_cloud_project_database.postgresql.id
-  name         = var.db_user
-}
-
-# Create the application database
+# Create the application database user
 resource "ovh_cloud_project_database_postgresql_user" "app" {
   service_name = var.service_name
   cluster_id   = ovh_cloud_project_database.postgresql.id

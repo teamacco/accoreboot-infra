@@ -1,3 +1,26 @@
 # Common variables for all environments
 app_name: accoreboot
 ssh_user: ubuntu
+
+# Deploy
+deploy_dir: /opt/accoreboot
+
+# Docker images
+api_image: "{{ dockerhub_username }}/accoreboot-api"
+api_tag: latest
+emqx_image: emqx/emqx:5.8
+powersync_image: journeyapps/powersync-service:latest
+caddy_image: caddy:2
+
+# Ports (internal)
+api_port: 3000
+powersync_port: 8080
+emqx_mqtt_port: 1883
+emqx_ws_port: 8083
+
+# Database
+db_name: accoreboot
+db_powersync_name: powersync_storage
+
+# JWT
+jwt_expires_in: 24h

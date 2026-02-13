@@ -24,11 +24,6 @@ variable "consumer_key" {
 }
 
 # OVH Account
-variable "user_id" {
-  description = "OVH user ID"
-  type        = string
-}
-
 variable "service_name" {
   description = "OVH service name (project ID)"
   type        = string

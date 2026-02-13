@@ -1,0 +1,190 @@
+---
+- name: Deploy AccoReboot stack
+  hosts: all
+  become: true
+  vars:
+    dockerhub_username: "{{ lookup('env', 'DOCKERHUB_USERNAME') }}"
+    dockerhub_token: "{{ lookup('env', 'DOCKERHUB_TOKEN') }}"
+    emqx_dashboard_password: "{{ lookup('env', 'EMQX_DASHBOARD_PASSWORD') | default('admin123', true) }}"
+
+  tasks:
+    # ==========================================
+    # Wait for cloud-init to finish
+    # ==========================================
+    - name: Wait for cloud-init Docker marker
+      ansible.builtin.wait_for:
+        path: /var/lib/cloud/instance/boot-finished-docker
+        timeout: 300
+
+    # ==========================================
+    # Create directories
+    # ==========================================
+    - name: Create deploy directories
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}/{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      loop:
+        - ""
+        - emqx
+        - powersync
+        - caddy
+        - keys
+
+    # ==========================================
+    # Generate JWT RS256 keys (idempotent)
+    # ==========================================
+    - name: Check if JWT private key exists
+      ansible.builtin.stat:
+        path: "{{ deploy_dir }}/keys/private.pem"
+      register: jwt_key
+
+    - name: Generate JWT RS256 private key
+      ansible.builtin.command:
+        cmd: openssl genrsa -out {{ deploy_dir }}/keys/private.pem 2048
+      when: not jwt_key.stat.exists
+
+    - name: Generate JWT RS256 public key
+      ansible.builtin.command:
+        cmd: openssl rsa -in {{ deploy_dir }}/keys/private.pem -pubout -out {{ deploy_dir }}/keys/public.pem
+      when: not jwt_key.stat.exists
+
+    - name: Set JWT key permissions
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}/keys/{{ item }}"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0600"
+      loop:
+        - private.pem
+        - public.pem
+
+    # ==========================================
+    # Docker Hub login
+    # ==========================================
+    - name: Login to Docker Hub
+      ansible.builtin.command:
+        cmd: docker login -u {{ dockerhub_username }} -p {{ dockerhub_token }}
+      become: true
+      become_user: ubuntu
+      no_log: true
+
+    # ==========================================
+    # Deploy configuration files
+    # ==========================================
+    - name: Deploy docker-compose.yml
+      ansible.builtin.template:
+        src: templates/docker-compose.yml.j2
+        dest: "{{ deploy_dir }}/docker-compose.yml"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+      register: compose_config
+
+    - name: Deploy .env
+      ansible.builtin.template:
+        src: templates/env.j2
+        dest: "{{ deploy_dir }}/.env"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0600"
+      register: env_config
+
+    - name: Deploy EMQX config
+      ansible.builtin.template:
+        src: templates/emqx.conf.j2
+        dest: "{{ deploy_dir }}/emqx/emqx.conf"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+      register: emqx_config
+
+    - name: Deploy PowerSync config
+      ansible.builtin.template:
+        src: templates/powersync.yaml.j2
+        dest: "{{ deploy_dir }}/powersync/powersync.yaml"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+      register: powersync_config
+
+    - name: Deploy PowerSync sync rules
+      ansible.builtin.template:
+        src: templates/sync_rules.yaml.j2
+        dest: "{{ deploy_dir }}/powersync/sync_rules.yaml"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+      register: sync_rules_config
+
+    - name: Deploy Caddyfile
+      ansible.builtin.template:
+        src: templates/Caddyfile.j2
+        dest: "{{ deploy_dir }}/caddy/Caddyfile"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+      register: caddy_config
+
+    - name: Deploy Makefile
+      ansible.builtin.template:
+        src: templates/Makefile.j2
+        dest: "{{ deploy_dir }}/Makefile"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+
+    # ==========================================
+    # Create PowerSync storage database
+    # ==========================================
+    - name: Create powersync_storage database
+      ansible.builtin.shell: |
+        docker run --rm postgres:17 psql \
+          "postgresql://{{ db_user }}:{{ db_password }}@{{ db_host }}:{{ db_port }}/{{ db_name }}?sslmode=require" \
+          -tc "SELECT 1 FROM pg_database WHERE datname = '{{ db_powersync_name }}'" | grep -q 1 \
+        || docker run --rm postgres:17 psql \
+          "postgresql://{{ db_user }}:{{ db_password }}@{{ db_host }}:{{ db_port }}/{{ db_name }}?sslmode=require" \
+          -c "CREATE DATABASE {{ db_powersync_name }}"
+      become: true
+      become_user: ubuntu
+      no_log: true
+
+    # ==========================================
+    # Start services
+    # ==========================================
+    - name: Start containers
+      ansible.builtin.command:
+        cmd: docker compose up -d --pull always
+        chdir: "{{ deploy_dir }}"
+      become: true
+      become_user: ubuntu
+
+    # ==========================================
+    # Wait for API health
+    # ==========================================
+    - name: Wait for API health check
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:80/health"
+        method: GET
+        status_code: 200
+      register: health_result
+      until: health_result.status == 200
+      retries: 30
+      delay: 10
+
+    # ==========================================
+    # Show status
+    # ==========================================
+    - name: Show container status
+      ansible.builtin.command:
+        cmd: docker ps --format "table {% raw %}{{.Names}}\t{{.Status}}\t{{.Ports}}{% endraw %}"
+      become: true
+      become_user: ubuntu
+      register: docker_status
+      changed_when: false
+
+    - name: Display container status
+      ansible.builtin.debug:
+        var: docker_status.stdout_lines

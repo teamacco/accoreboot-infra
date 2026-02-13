@@ -4,29 +4,40 @@
 Mise en place de l'infrastructure de production pour AccoReboot.
 
 ## Stack technique
-- **Backend** : Node.js (replicas Docker)
+- **Backend** : NestJS (Docker, image privee Docker Hub)
 - **Base de donnees** : PostgreSQL manage OVH (PG17 max) + TimescaleDB (positions GPS)
-- **MQTT Broker** : EMQX (a confirmer vs alternatives)
-- **Sync** : PowerSync
-- **Reverse proxy** : Caddy (SSL automatique via Let's Encrypt)
+- **MQTT Broker** : EMQX 5.8 (auth HTTP via API)
+- **Sync** : PowerSync (PostgreSQL bucket storage)
+- **Reverse proxy** : Caddy (HTTP :80 sans domaine, SSL quand domaine ajoute)
 - **IaC** : Terraform (provisioning OVH) + Ansible (configuration serveurs)
 - **Secrets** : SOPS + age (chiffrement des credentials dans Git)
+- **Docker** : installe via cloud-init (pas Ansible)
 
 ## Architecture cible
 - 1 projet OVH Public Cloud par environnement (accoreboot-test, accoreboot-preprod, accoreboot-prod)
-- Instance compute b3-8 : Caddy + backend Node.js (replicas) + EMQX + PowerSync
-- Instance PostgreSQL managee OVH db1-4 (separee)
-- Reseau prive OVH (vRack/VLAN) pour communication backend <-> PostgreSQL
-- Preprod : PostgreSQL managee demarrable/arretable a la demande
+- Instance compute b3-8 : Caddy + NestJS API + EMQX + PowerSync (4 containers Docker)
+- Instance PostgreSQL managee OVH db1-4 (separee, sslmode=require)
+- Pas de domaine pour l'instant (acces IP only, HTTP :80)
+- Backend only (pas de frontend React)
 
 ## Flux de donnees
 ```
-Traceurs GPS  --MQTT-->  EMQX (broker)  --SQL-->  PostgreSQL + TimescaleDB
-                           |
-                           +--->  Backend Node.js (temps reel)
-
-Client HTTPS  --->  Caddy (reverse proxy + SSL)  --->  Backend Node.js
+Traceurs GPS  --MQTT:1883-->  EMQX (broker)
+                                |
+                                +--auth/acl-->  API NestJS
+                                                    |
+Clients  --HTTP:80-->  Caddy  --reverse proxy-->    +--SQL-->  PostgreSQL (OVH manage)
+                         |
+                         +--/powersync/*-->  PowerSync  --replication-->  PostgreSQL
 ```
+
+## Services et ports
+| Service    | Image                          | Ports                                     |
+|------------|--------------------------------|-------------------------------------------|
+| Caddy      | caddy:2                        | 80, 443                                   |
+| API NestJS | privee Docker Hub              | 127.0.0.1:3000 (via Caddy)                |
+| EMQX       | emqx/emqx:5.8                 | 1883 (MQTT), 8083 (WS), 18083 (test only) |
+| PowerSync  | journeyapps/powersync-service  | 127.0.0.1:8080 (via Caddy)                |
 
 ## Contraintes connues
 - TimescaleDB non disponible sur PG18, rester sur PG17 max
@@ -39,11 +50,13 @@ Client HTTPS  --->  Caddy (reverse proxy + SSL)  --->  Backend Node.js
 - [x] Gestion des secrets (SOPS + age)
 - [x] Terraform remote state (S3 OVH)
 - [x] Credentials par environnement (1 projet OVH par env)
-- [ ] Comparatif MQTT : EMQX vs alternatives
 - [x] Generer cle age et configurer .sops.yaml
+- [x] Cloud-init (Docker via user_data)
+- [x] Playbooks Ansible (site.yml + templates)
 - [ ] Creer les projets OVH (test, preprod, prod) et remplir les credentials
 - [ ] Bootstrap du bucket S3 (make bootstrap)
 - [ ] Premier make plan ENV=test
+- [ ] Premier make up ENV=test (deploiement complet)
 - [ ] Test reboot sans perte de donnees (= premier test d'integration)
 
 ## Structure du repo
@@ -56,9 +69,9 @@ Client HTTPS  --->  Caddy (reverse proxy + SSL)  --->  Backend Node.js
 ├── .gitignore
 │
 ├── credentials/                     # Secrets chiffres par SOPS (commites dans Git)
-│   ├── common.enc.env              # Cles API OVH + SSH (partagees entre envs)
+│   ├── common.enc.env              # Cles API OVH + SSH + Docker Hub (partagees entre envs)
 │   ├── common.enc.env.example      # Template
-│   ├── test.enc.env                # Project ID + OpenStack du projet test
+│   ├── test.enc.env                # Project ID + OpenStack + EMQX password du projet test
 │   ├── test.enc.env.example        # Template
 │   ├── preprod.enc.env
 │   └── prod.enc.env
@@ -72,14 +85,15 @@ Client HTTPS  --->  Caddy (reverse proxy + SSL)  --->  Backend Node.js
 │   │   ├── variables.tf
 │   │   └── outputs.tf
 │   ├── modules/
-│   │   ├── compute/                 # Instance OpenStack (keypair, secgroup, instance)
+│   │   ├── compute/                 # Instance OpenStack (keypair, secgroup, instance, cloud-init)
+│   │   │   └── templates/cloud-init.yml  # Installe Docker, cree /opt/accoreboot
 │   │   └── managed_db/              # PostgreSQL manage OVH
 │   └── environments/
 │       ├── test/                    # b3-8 compute + db1-4 PostgreSQL
 │       │   ├── main.tf              # Backend S3 + modules compute + managed_db
 │       │   ├── variables.tf
 │       │   ├── outputs.tf
-│       │   └── templates/inventory.tpl
+│       │   └── templates/inventory.tpl  # Inclut db_user/db_password
 │       ├── preprod/
 │       └── prod/
 │
@@ -87,10 +101,19 @@ Client HTTPS  --->  Caddy (reverse proxy + SSL)  --->  Backend Node.js
     ├── ansible.cfg
     ├── inventory/                   # Genere par Terraform
     ├── group_vars/
-    │   ├── all/main.yml
-    │   └── test/main.yml
+    │   ├── all/main.yml             # Images Docker, ports, db_name, jwt_expires_in
+    │   └── test/main.yml            # node_env, emqx_dashboard_port_exposed
     ├── roles/
     └── playbooks/
+        ├── site.yml                 # Playbook principal (deploy complet)
+        └── templates/
+            ├── docker-compose.yml.j2  # 4 services : api, emqx, powersync, caddy
+            ├── env.j2                 # Variables d'environnement (.env)
+            ├── emqx.conf.j2           # Config EMQX (auth/ACL HTTP)
+            ├── powersync.yaml.j2      # Config PowerSync (sslmode=verify-ca)
+            ├── sync_rules.yaml.j2     # Regles de sync PowerSync
+            ├── Caddyfile.j2           # Reverse proxy (:80, IP-only)
+            └── Makefile.j2            # Commandes sur l'instance (up, down, logs, ps)
 ```
 
 ## Gestion des secrets (SOPS)
@@ -104,10 +127,10 @@ Client HTTPS  --->  Caddy (reverse proxy + SSL)  --->  Backend Node.js
 ## Terraform state
 - Remote S3 sur OVH Object Storage pour TOUS les envs (y compris test)
 - Un bucket `accoreboot-tfstate` par projet OVH (1 bucket par env, isolation complete)
-- Bucket cree par `terraform/bootstrap/` (state local, une fois par env: `make bootstrap ENV=test`)
-- S3 endpoint : `https://s3.eu-west-par.io.cloud.ovh.net/`
+- Bucket + credentials S3 crees par `terraform/bootstrap/` (state local, une fois par env: `make bootstrap ENV=test`)
+- S3 endpoint : `https://s3.gra.io.cloud.ovh.net/`
+- Credentials S3 generees via `ovh_cloud_project_user_s3_credential` (bootstrap), stockees dans common.enc.env
 - Credentials S3 passees via env vars AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-- Config backend S3 OVH testee et fonctionnelle dans test-manager
 
 ## Projets OVH (1 par environnement)
 - Chaque env = un projet OVH Public Cloud separe (isolation complete)
@@ -136,32 +159,28 @@ make sops-edit-common       # editer les credentials communs
 make sops-edit-env ENV=test # editer les credentials d'un env
 ```
 
-## Patterns a reprendre de test-manager (~/src/test-manager branch feature/TM-1234-cloud-init)
+## Deploiement Ansible (playbook site.yml)
 
-### Cloud-init (terraform user_data)
-- Installation Docker au boot via `curl -fsSL https://get.docker.com | sh`
-- Script de policy routing Docker pour reseau dual public/prive OVH
-- Marqueur de fin cloud-init (`touch /var/lib/cloud/instance/boot-finished-docker`)
-
-### Deploy script avec polling
-1. terraform apply
-2. Poll SSH (15 tentatives, 5s interval)
-3. Poll marqueur cloud-init (30 tentatives, 10s interval)
-4. SCP fichiers config (docker-compose, Caddyfile, .env)
-5. docker compose up -d --pull always
-6. Verification SSL/HTTPS
+Le playbook `ansible/playbooks/site.yml` effectue dans l'ordre :
+1. Wait cloud-init marker (`/var/lib/cloud/instance/boot-finished-docker`)
+2. Cree les repertoires dans `/opt/accoreboot` (emqx, powersync, caddy, keys)
+3. Genere les cles JWT RS256 (idempotent, openssl)
+4. Docker Hub login (image API privee)
+5. Deploie les 7 fichiers de config (templates Jinja2)
+6. Cree la database `powersync_storage` sur le PG manage (via docker run postgres psql)
+7. `docker compose up -d --pull always`
+8. Wait API /health (via Caddy sur :80)
+9. Affiche le status des containers
 
 ### Caddy comme reverse proxy
-- Generation dynamique du Caddyfile avec le subdomain de l'env
-- SSL automatique Let's Encrypt
-- Docker compose : caddy -> backend
+- IP-only `:80` (pas de HTTPS sans domaine)
+- Routes : `/api/*`, `/.well-known/*`, `/health` → api:3000
+- `/powersync/*` → powersync:8080 (strip prefix)
+- `/mqtt` → emqx:8083 (WebSocket)
 
-### DNS automatique Cloudflare
-- Terraform cree un record DNS A pointant vers l'IP de l'instance
-
-### Packer (alternative au cloud-init)
-- Pre-bake image Debian avec Docker
-- Plus rapide au boot mais plus lourd a maintenir
+### Credentials necessaires (SOPS)
+- `common.enc.env` : DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+- `<env>.enc.env` : EMQX_DASHBOARD_PASSWORD
 
 ## Decisions prises
 - **IaC plutot que UI** : reproductibilite, tests de reboot, onboarding
@@ -178,6 +197,13 @@ make sops-edit-env ENV=test # editer les credentials d'un env
 - **terraform auto-approve** sur apply et destroy (pas de confirmation interactive)
 - **1 bucket S3 par projet OVH** : isolation complete des states entre envs
 - **Env test = MVP** : le test de reboot necessite un flux complet donc c'est le MVP
+- **Docker via cloud-init** (pas Ansible) : simplifie le playbook, Docker dispo avant Ansible
+- **Images Docker Hub** : registry prive pour l'API, images publiques pour emqx/powersync/caddy
+- **Pas de domaine** pour l'instant : Caddy en mode IP-only (:80), HTTPS quand domaine ajoute
+- **Backend only** : pas de frontend React deploye (acces API uniquement)
+- **EMQX 5.8** : broker MQTT avec auth/ACL HTTP via l'API NestJS
+- **PowerSync PostgreSQL storage** : bucket storage dans une DB separee sur le meme PG manage
+- **JWT RS256** : cles generees sur l'instance par Ansible (idempotent)
 
 ## Conventions
 - Makefile comme facade unique pour toutes les commandes infra

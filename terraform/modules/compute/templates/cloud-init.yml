@@ -1,0 +1,14 @@
+#cloud-config
+
+package_update: true
+
+runcmd:
+  # Install Docker via official script
+  - curl -fsSL https://get.docker.com | sh
+  - usermod -aG docker ubuntu
+
+  # Create app directory
+  - mkdir -p /opt/accoreboot
+
+  # Signal that cloud-init Docker setup is complete
+  - touch /var/lib/cloud/instance/boot-finished-docker
