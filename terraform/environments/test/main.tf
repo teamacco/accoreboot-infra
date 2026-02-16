@@ -62,6 +62,7 @@ module "managed_db" {
   pg_version   = var.pg_version
   plan         = var.db_plan
   flavor       = var.db_flavor
+  allowed_ip   = module.compute.public_ip
 }
 
 # Generate Ansible inventory

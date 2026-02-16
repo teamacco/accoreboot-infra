@@ -2,6 +2,9 @@
 - name: Deploy AccoReboot stack
   hosts: all
   become: true
+  vars_files:
+    - ../group_vars/all/main.yml
+    - ../group_vars/{{ target_env }}/main.yml
   vars:
     dockerhub_username: "{{ lookup('env', 'DOCKERHUB_USERNAME') }}"
     dockerhub_token: "{{ lookup('env', 'DOCKERHUB_TOKEN') }}"
@@ -137,22 +140,8 @@
         mode: "0644"
 
     # ==========================================
-    # Create PowerSync storage database
-    # ==========================================
-    - name: Create powersync_storage database
-      ansible.builtin.shell: |
-        docker run --rm postgres:17 psql \
-          "postgresql://{{ db_user }}:{{ db_password }}@{{ db_host }}:{{ db_port }}/{{ db_name }}?sslmode=require" \
-          -tc "SELECT 1 FROM pg_database WHERE datname = '{{ db_powersync_name }}'" | grep -q 1 \
-        || docker run --rm postgres:17 psql \
-          "postgresql://{{ db_user }}:{{ db_password }}@{{ db_host }}:{{ db_port }}/{{ db_name }}?sslmode=require" \
-          -c "CREATE DATABASE {{ db_powersync_name }}"
-      become: true
-      become_user: ubuntu
-      no_log: true
-
-    # ==========================================
     # Start services
+    # (Databases created by Terraform, not Ansible)
     # ==========================================
     - name: Start containers
       ansible.builtin.command:

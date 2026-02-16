@@ -37,3 +37,21 @@ variable "db_user" {
   type        = string
   default     = "accoreboot"
 }
+
+variable "db_name" {
+  description = "Application database name"
+  type        = string
+  default     = "accoreboot"
+}
+
+variable "db_powersync_name" {
+  description = "PowerSync storage database name"
+  type        = string
+  default     = "powersync_storage"
+}
+
+variable "allowed_ip" {
+  description = "IP address allowed to connect (e.g. compute instance public IP)"
+  type        = string
+  default     = ""
+}
