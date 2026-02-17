@@ -10,8 +10,8 @@ Infrastructure de production pour AccoReboot — deploye et operationnel sur OVH
 - **Sync** : PowerSync (PostgreSQL bucket storage)
 - **Reverse proxy** : Caddy (HTTP :80 sans domaine, SSL quand domaine ajoute)
 - **IaC** : Terraform (provisioning OVH) + Ansible (configuration serveurs)
-- **Task runner** : justfile (facade unique, remplace le Makefile — ADR-002 accepte)
-- **Secrets** : SOPS + age (chiffrement des credentials dans Git, dechiffrement inline dans justfile)
+- **Task runner** : Makefile (facade unique)
+- **Secrets** : SOPS + age (chiffrement des credentials dans Git, dechiffrement via scripts/with-secrets.sh)
 - **Docker** : installe via cloud-init (pas Ansible)
 
 ## Architecture deployee (test)
@@ -68,8 +68,8 @@ curl http://<IP>/.well-known/jwks.json     # -> cle publique RSA
 - [x] Credentials par environnement (1 projet OVH par env)
 - [x] Cloud-init (Docker via user_data)
 - [x] Playbooks Ansible (site.yml + templates)
-- [x] Justfile (facade unique, inline SOPS, remplace Makefile)
-- [x] Premier deploiement test (just env=test up)
+- [x] Makefile (facade unique, SOPS via with-secrets.sh)
+- [x] Premier deploiement test (make up ENV=test)
 - [x] Health check OK (http://<IP>/health)
 - [x] JWKS OK (http://<IP>/.well-known/jwks.json)
 - [x] 4 containers running
@@ -82,10 +82,13 @@ curl http://<IP>/.well-known/jwks.json     # -> cle publique RSA
 .
 ├── CLAUDE.md
 ├── README.md
-├── justfile                         # Facade unique (remplace Makefile)
-├── Makefile                         # Legacy (garde pour comparaison ADR-002)
+├── Makefile                         # Facade unique
 ├── .sops.yaml                       # Regles de chiffrement SOPS
 ├── .gitignore
+│
+├── scripts/
+│   ├── with-secrets.sh              # Wrapper SOPS (decrypt + exec)
+│   └── state-overview.sh            # Infrastructure status overview
 │
 ├── credentials/                     # Secrets chiffres par SOPS (commites dans Git)
 │   ├── common.enc.env              # Cles API OVH + SSH + Docker Hub + S3
@@ -126,27 +129,27 @@ curl http://<IP>/.well-known/jwks.json     # -> cle publique RSA
     └── architecture.svg
 ```
 
-## Justfile (facade unique)
+## Makefile (facade unique)
 ```bash
-just env=test up           # Full deploy (build + push + init + apply + deploy)
-just env=test down         # Destroy + clean
-just env=test deploy       # Ansible seulement
-just env=test plan         # Terraform plan
-just env=test apply        # Terraform apply
-just env=test ssh          # SSH sur le serveur
-just env=test status       # Docker ps sur le serveur
-just env=test stop/start   # OpenStack stop/start instance
-just build                 # Build Docker image API
-just push                  # Push image vers Docker Hub
-just sops-edit-common      # Editer credentials communs
-just sops-edit-env env=test  # Editer credentials d'un env
-just infra                 # Overview de tous les envs
+make up ENV=test              # Full deploy (build + push + init + apply + deploy)
+make down ENV=test            # Destroy + clean (with confirmation)
+make deploy ENV=test          # Ansible seulement
+make plan ENV=test            # Terraform plan
+make apply ENV=test           # Terraform apply
+make ssh ENV=test             # SSH sur le serveur
+make status ENV=test          # Docker ps sur le serveur
+make stop ENV=test            # OpenStack stop instance
+make start ENV=test           # OpenStack start instance
+make build                    # Build Docker image API
+make push                     # Push image vers Docker Hub
+make sops-edit-common         # Editer credentials communs
+make sops-edit-env ENV=test   # Editer credentials d'un env
+make state                    # Overview de tous les envs
 ```
 
 ## Gestion des secrets (SOPS)
 - Backend de cle : age (simple, zero dependance cloud)
-- Dechiffrement inline dans le justfile (shebang recipes + while IFS='=' read)
-- Plus besoin de scripts/with-secrets.sh (garde pour compatibilite Makefile)
+- Dechiffrement via `scripts/with-secrets.sh` (wrapper SOPS, supporte mode common-only pour build/push)
 - 1 fichier common (cles API OVH, SSH, S3, Docker Hub) + 1 fichier par env
 - Pas de provider SOPS dans Terraform (evite d'ajouter des secrets dans le state)
 
@@ -168,7 +171,7 @@ Note : les databases `accoreboot` et `powersync_storage` sont creees par Terrafo
 - **IaC plutot que UI** : reproductibilite, tests de reboot, onboarding
 - **Terraform** pour le provisioning des ressources OVH
 - **Ansible** pour la configuration des services sur les instances
-- **justfile** comme facade (ADR-002, remplace Makefile — inline SOPS, confirmations, arguments positionnels)
+- **Makefile** comme facade (SOPS via with-secrets.sh, confirmations pour destroy/down)
 - **Caddy** comme reverse proxy (SSL auto, config simple)
 - **Dossiers par env** plutot que Terraform workspaces (isolation state, configs differentes)
 - **1 projet OVH par env** : isolation complete des ressources
@@ -183,7 +186,7 @@ Note : les databases `accoreboot` et `powersync_storage` sont creees par Terrafo
 - **Ansible vars_files explicite** : workaround Ansible 2.19 qui ne charge pas les group_vars automatiquement pour les playbooks dans playbooks/
 
 ## Conventions
-- justfile comme facade unique pour toutes les commandes infra
+- Makefile comme facade unique pour toutes les commandes infra
 - Un dossier par environnement dans terraform/environments/
 - Secrets chiffres SOPS dans credentials/ (commites dans Git)
 - Nommage instances : `<env>-backend` (compute), `<env>-postgresql` (managed db)
