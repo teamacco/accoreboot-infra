@@ -9,11 +9,13 @@ replication:
     - type: postgresql
       uri: !env PS_DATA_SOURCE_URI
       sslmode: verify-ca
+      cacert: /config/ovh-pg-ca.pem
 
 storage:
   type: postgresql
   uri: !env PS_STORAGE_URI
   sslmode: verify-ca
+  cacert: /config/ovh-pg-ca.pem
 
 port: !env PS_PORT
 

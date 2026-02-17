@@ -4,10 +4,11 @@ services:
   # ===========================================
   api:
     image: {{ api_image }}:{{ api_tag }}
-    container_name: {{ app_name }}-api
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:{{ api_port }}:{{ api_port }}"
+    deploy:
+      replicas: {{ api_replicas | default(2) }}
+    expose:
+      - "{{ api_port }}"
     env_file:
       - .env
     volumes:

@@ -54,6 +54,15 @@
         cmd: openssl rsa -in {{ deploy_dir }}/keys/private.pem -pubout -out {{ deploy_dir }}/keys/public.pem
       when: not jwt_key.stat.exists
 
+    - name: Fetch OVH PostgreSQL CA certificate
+      ansible.builtin.shell: |
+        echo | openssl s_client -connect {{ db_host }}:{{ db_port }} -showcerts 2>/dev/null \
+          | sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' \
+          | awk 'BEGIN{n=0} /BEGIN CERTIFICATE/{n++} n==2' \
+          > {{ deploy_dir }}/powersync/ovh-pg-ca.pem
+      args:
+        creates: "{{ deploy_dir }}/powersync/ovh-pg-ca.pem"
+
     - name: Set JWT key permissions
       ansible.builtin.file:
         path: "{{ deploy_dir }}/keys/{{ item }}"

@@ -12,8 +12,11 @@ emqx_image: emqx/emqx:5.8
 powersync_image: journeyapps/powersync-service:latest
 caddy_image: caddy:2
 
-# Ports (internal)
+# API
 api_port: 3000
+api_replicas: 2
+
+# Ports (internal)
 powersync_port: 8080
 emqx_mqtt_port: 1883
 emqx_ws_port: 8083
